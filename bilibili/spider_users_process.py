@@ -2,26 +2,15 @@
 #coding:utf-8
 
 
-
-'''
-    爬取bilibili一亿用户的数据
-    第一个用户的UID=1（注册时间2009-6-24），最后一个用户的UID=100000000（注册时间2017-3-31）
-    这里看不到用户信息：URL = http://space.bilibili.com/ + UID
-    POST这个网址采用JSON数据返回：URL=space.bilibili.com/ajax/member/GetInfo
-    中间有些用户并不存在，如12，这些判断mid直接忽略
-'''
-
 import requests
 import time, json, sys, copy, random
-import threading
+from multiprocessing import Process, Pool, freeze_support
 from Queue import Queue
 import MySQLdb
 from DBUtils.PooledDB import PooledDB
 sys.path.append('..')
-from proxy_ip.getProxy import *
+from proxy_ip.getProxy_Process import *
 
-
-THREAD_COUNT = 50
 
 userAgent = [
     'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36 OPR/26.0.1656.60',
@@ -79,58 +68,19 @@ headers = {
     'Connection': 'close',
     'Cache-Control': 'max-age=0'
 }
+
 payloads = {
     'mid': '1',
     'csrf': ''
 }
 
-print '获取代理IP...'
-proxies_ip = getPorxyIP()
-threads = []  #线程列表
+
+pool = PooledDB(MySQLdb, mincached=5, host='127.0.0.1', user='root', passwd='yangjinxin', db='bilibili_user',
+                port=3306, charset='utf8')
 
 
-class GetUserInfo(threading.Thread):
-    def __init__(self, queue, pool):
-        threading.Thread.__init__(self)
-        self.__queue = queue
-        self.__pool = pool
-
-    def run(self):
-        while not self.__queue.empty():
-            global headers, payloads, proxies_ip, userAgent, threads
-            url_referer = self.__queue.get()   # url_referer = http://space.bilibili.com/1
-            #重构报头和载荷，不能对全局变量进行复制，会影响到其他进程
-            headers = copy.deepcopy(headers)
-            payloads = copy.deepcopy(payloads)
-            proxies = proxies_ip[random.randint(0, len(proxies_ip)-1)]
-
-            headers['Referer'] = url_referer
-            headers['User-Agent'] = userAgent[random.randint(0, len(userAgent)-1)]
-            payloads['mid'] = url_referer.split('/')[-1]
-            url = 'http://space.bilibili.com/ajax/member/GetInfo'
-
-            try:
-                session = requests.session()
-                response = session.post(url, headers=headers, data=payloads, proxies=proxies)
-                print
-                print response.status_code, self.getName(), self.isAlive(),
-
-                if response.status_code == 200:
-                    user_info = json.loads(response.text)  # 反序列化返回的JSON数据
-                    if user_info['status']:
-                        put_user(user_info, self.__pool)   #调用函数
-                        time.sleep(2)
-                else:  #如果status_code不是200，说明服务器拒绝，则重新把URL放回队列
-                    self.__queue.put(url_referer)
-                    time.sleep(10)
-
-            #讲道理把异常抛出后，就继续执行
-            except BaseException, e:  #没找到ConnectionError，如果发生异常，则线程终止，重新启动新线程加入进去
-                print "ConnectionError", self.getName()
-
-            #self.__queue.task_done()
-
-def put_user(user_info, pool):
+def put_user(user_info):
+    global pool
     id = int( user_info['data']['mid'] )
     name = user_info['data']['name'].encode('utf-8')
     sex = user_info['data']['sex'].encode('utf-8')
@@ -144,26 +94,65 @@ def put_user(user_info, pool):
     conn.commit()
     conn.close()
 
-def main():
-    global threads
+
+def spider(args):        # url_referer = http://space.bilibili.com/1
+        #重构报头和载荷，不能对全局变量进行复制，会影响到其他进程
+        global  headers, payloads, userAgent
+        url_referer = args[0]
+        proxies_ip = args[1]
+
+        headers = copy.deepcopy(headers)
+        payloads = copy.deepcopy(payloads)
+        proxies = proxies_ip[random.randint(0, len(proxies_ip)-1)]
+
+        headers['Referer'] = url_referer
+        headers['User-Agent'] = userAgent[random.randint(0, len(userAgent)-1)]
+        payloads['mid'] = url_referer.split('/')[-1]
+        url = 'http://space.bilibili.com/ajax/member/GetInfo'
+
+        try:
+            session = requests.session()
+            response = session.post(url, headers=headers, data=payloads, proxies=proxies)
+            print
+            print response.status_code,
+
+            if response.status_code == 200:
+                user_info = json.loads(response.text)  # 反序列化返回的JSON数据
+                if user_info['status']:
+                    put_user(user_info)   #调用函数
+                return 0
+            else:  #如果status_code不是200，说明服务器拒绝，则重新把URL放回队列
+                return int(url_referer.split('/')[-1])
+
+        #讲道理把异常抛出后，就继续执行
+        except BaseException, e:
+            print e
+            return 0
+
+def run(number_list, proxies_ip):
+    p = Pool()
     url_referer = 'http://space.bilibili.com/'
-    queue = Queue()
-    pool = PooledDB(MySQLdb, mincached=50, host='127.0.0.1', user='root',passwd='yangjinxin',db='bilibili_user', port=3306, charset='utf8')
+    result = []
+    for i in number_list:
+        args = [url_referer+str(i), proxies_ip]
+        result.append( p.apply_async(spider, args=(args,)) )
 
-    for i in xrange(1, 100001):
-        queue.put(url_referer + str(i))
+    p.close()
+    p.join()
+    result_data = [x.get() for x in result]
+    return [ x for x in result_data if x!=0 ]    #把403的重新放回队列
 
-    #建立多线程
-    threads = [ GetUserInfo(queue, pool) for i in xrange(THREAD_COUNT)]
-    for i in range(0, THREAD_COUNT):
-        threads[i].start()  #启动
-        time.sleep(0.1)
-
-    #等待所有队列为空
-    #queue.join()
-    for i in range(len(threads)):
-        threads[i].join()
+def main():
+    print "Getting Proxy IP..."
+    proxies_ip = get_proxy_ip()  #从getProxy_Process.py中获取代理IP
+    print 'Staring Spider...', time.ctime()
+    number_list = range(1, 1001)
+    while len(number_list):
+        number_list = run(number_list, proxies_ip)
+        time.sleep(60)
 
 if __name__ == '__main__':
-    print 'Staring Spider...', time.ctime()
+    freeze_support()
     main()
+
+
