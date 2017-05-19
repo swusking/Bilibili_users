@@ -84,15 +84,26 @@ def put_user(user_info):
     id = int( user_info['data']['mid'] )
     name = user_info['data']['name'].encode('utf-8')
     sex = user_info['data']['sex'].encode('utf-8')
+    coins = int(user_info['data']['coins'])
+    regtime = user_info['data']['regtime'] if 'regtime' in user_info['data'] else 0
+    place = user_info['data']['place'].encode('utf-8') if 'place' in user_info['data'] else ''
+    birthday = user_info['data']['birthday'].encode('utf-8') if 'birthday' in user_info['data'] else ''
+    sign = user_info['data']['sign'].encode('utf-8')
+    description = user_info['data']['description'].encode('utf-8')
+    article  = int(user_info['data']['article'])
+    fans = int(user_info['data']['fans'])
+    attention = int(user_info['data']['attention'])
     level = int( user_info['data']['level_info']['current_level'] )
 
     print id,
+
     conn = pool.connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO user_info(`mid`, `name`, `sex`, `level`) VALUE(%s, %s, %s, %s);" , (id, name, sex, level))
+    cursor.execute("INSERT INTO user_info(`mid`, `name`, `sex`, `coins`, `regtime`, `place`, `birthday`, `sign`, `description`, `article`, `fans`, `attention`, `level`) VALUE ( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);" , (id, name, sex, coins, regtime, place, birthday, sign, description, article, fans, attention, level))
     cursor.close()
     conn.commit()
     conn.close()
+
 
 
 def spider(args):        # url_referer = http://space.bilibili.com/1
@@ -118,15 +129,13 @@ def spider(args):        # url_referer = http://space.bilibili.com/1
 
             if response.status_code == 200:
                 user_info = json.loads(response.text)  # 反序列化返回的JSON数据
-                if user_info['status']:
+                if user_info['status']:   #True彩条用
                     put_user(user_info)   #调用函数
                 return 0
             else:  #如果status_code不是200，说明服务器拒绝，则重新把URL放回队列
                 return int(url_referer.split('/')[-1])
 
-        #讲道理把异常抛出后，就继续执行
         except BaseException, e:
-            print e
             return 0
 
 def run(number_list, proxies_ip):
@@ -145,10 +154,16 @@ def run(number_list, proxies_ip):
 def main():
     print "Getting Proxy IP..."
     proxies_ip = get_proxy_ip()  #从getProxy_Process.py中获取代理IP
+    #proxies_ip = [{'https': u'111.8.22.214:8080'}, {'https': u'111.23.10.175:8080'}, {'http': u'111.23.10.30:80'}, {'http': u'111.23.10.171:80'}, {'https': u'111.23.10.37:8080'}, {'https': u'111.23.10.174:8080'}, {'http': u'111.23.10.17:80'}, {'http': u'111.23.10.98:80'}, {'http': u'111.23.10.27:80'}, {'https': u'111.23.10.14:8080'}, {'https': u'111.8.22.209:8080'}, {'https': u'111.8.22.205:8080'}, {'https': u'111.23.10.44:8080'}, {'https': u'111.23.10.99:8088'}, {'http': u'111.23.10.99:80'}, {'https': u'111.23.10.24:8080'}, {'http': u'111.23.10.43:80'}, {'https': u'111.23.10.12:8080'}, {'http': u'111.23.10.46:80'}, {'https': u'111.23.10.123:8080'}, {'https': u'111.8.22.213:8080'}, {'http': u'111.23.10.201:80'}, {'https': u'111.23.10.47:8080'}, {'https': u'111.23.10.28:8080'}, {'https': u'111.23.10.40:8080'}, {'http': u'111.23.10.19:80'}, {'https': u'111.23.10.16:8080'}, {'https': u'111.8.22.215:8080'}, {'http': u'111.23.10.14:80'}, {'https': u'111.8.22.208:8080'}, {'https': u'111.23.10.35:8080'}, {'https': u'111.23.10.98:8080'}, {'https': u'111.23.10.46:8080'}, {'http': u'111.23.10.25:80'}, {'http': u'111.23.10.12:80'}, {'http': u'111.23.10.174:80'}, {'https': u'111.8.22.203:8080'}, {'https': u'111.23.10.50:8080'}, {'https': u'111.23.10.172:8080'}, {'https': u'111.8.22.211:8080'}, {'http': u'111.23.10.28:80'}, {'http': u'111.23.10.202:80'}, {'http': u'111.23.10.44:80'}, {'http': u'111.23.10.26:80'}, {'https': u'111.8.22.204:8080'}, {'https': u'111.23.10.25:8080'}, {'https': u'111.23.10.11:8080'}, {'http': u'111.23.10.173:80'}, {'http': u'111.23.10.48:80'}, {'http': u'111.23.10.112:80'}, {'https': u'111.8.22.202:8080'}, {'http': u'111.23.10.15:80'}, {'http': u'111.23.10.10:80'}, {'https': u'111.23.10.173:8080'}, {'https': u'111.23.10.23:8080'}, {'https': u'111.23.10.17:8080'}, {'https': u'111.23.10.34:8080'}, {'http': u'111.23.10.13:80'}, {'https': u'111.23.10.99:8080'}, {'http': u'111.23.10.21:80'}, {'http': u'111.23.10.37:80'}]
     print 'Staring Spider...', time.ctime()
-    number_list = range(1, 1001)
-    while len(number_list):
+    number_list = range(int(sys.argv[1]), int(sys.argv[2]))
+    i = 1
+    while len(number_list):    #抓取失败的重新抓
         number_list = run(number_list, proxies_ip)
+        print "第%d次抓取完毕，还剩%d个数据" % (i, len(number_list))
+        if i==0:
+            break
+        i = i+1
         time.sleep(60)
 
 if __name__ == '__main__':
